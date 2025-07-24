@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>1대1 오목 게임</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Inter 폰트 적용 */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* 오목판 셀 기본 스타일 */
+        .cell {
+            width: 4rem; /* 64px */
+            height: 4rem; /* 64px */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem; /* 돌 이모지 크기 */
+            cursor: pointer;
+            transition: background-color 0.1s ease-in-out;
+        }
+        .cell:hover {
+            background-color: rgba(255, 255, 255, 0.1); /* 호버 시 약간 밝아짐 */
+        }
+        /* 보드 경계선 */
+        #game-board {
+            border-top: 2px solid #4a5568;
+            border-left: 2px solid #4a5568;
+        }
+        .cell:not(:last-child) {
+            border-right: 2px solid #4a5568;
+        }
+        .row-container:not(:last-child) .cell {
+            border-bottom: 2px solid #4a5568;
+        }
+        /* 게임 정보 메시지 스타일 */
+        #game-status {
+            min-height: 2.5rem; /* 메시지가 없을 때도 공간 유지 */
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-gray-800 to-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4">
+    <div class="bg-gray-700 p-8 rounded-xl shadow-2xl max-w-lg w-full flex flex-col items-center space-y-6">
+        <h1 class="text-4xl font-extrabold text-teal-300 mb-4">
+            1대1 오목 게임
+        </h1>
+
+        <!-- 게임 정보 표시 -->
+        <div id="game-status" class="text-xl font-semibold text-center text-gray-200">
+            서버에 연결 중...
+        </div>
+
+        <!-- 오목판 컨테이너 -->
+        <div id="game-board" class="grid grid-cols-8 border-2 border-gray-500 rounded-lg overflow-hidden bg-gray-600">
+            <!-- JavaScript로 셀이 동적으로 채워집니다 -->
+        </div>
+
+        <!-- 게임 재시작 버튼 -->
+        <button id="restart-button" class="mt-6 px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-blue-500 focus:ring-opacity-50">
+            게임 다시 시작
+        </button>
+    </div>
+
+    <script>
+        // WebSocket 서버 URL을 여기에 입력하세요.
+        // 이 URL은 별도로 배포된 백엔드 서버의 주소여야 합니다.
+        // 예시: const WS_SERVER_URL = "wss://your-omok-backend.herokuapp.com";
+        // 로컬 테스트용: const WS_SERVER_URL = "ws://localhost:3000";
+        const WS_SERVER_URL = "ws://localhost:3000"; // 이 부분을 실제 배포된 서버 URL로 변경해야 합니다!
+
+        let ws = null; // WebSocket 연결 객체
+        let board = Array(8).fill(null).map(() => Array(8).fill(null)); // 8x8 게임 보드 상태 (null: 빈 칸, 'B': 흑돌, 'W': 백돌)
+        let playerColor = null; // 현재 플레이어의 돌 색깔 ('B' 또는 'W')
+        let isMyTurn = false; // 현재 내 턴인지 여부
+
+        const gameBoardElement = document.getElementById('game-board');
+        const gameStatusElement = document.getElementById('game-status');
+        const restartButton = document.getElementById('restart-button');
+
+        // 게임 초기화 및 WebSocket 연결
+        function initGame() {
+            // 기존 WebSocket 연결이 있다면 닫기
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+
+            updateStatus('서버에 연결 중...');
+            playerColor = null;
+            isMyTurn = false;
+            restartButton.disabled = true; // 연결 전까지 버튼 비활성화
+
+            try {
+                ws = new WebSocket(WS_SERVER_URL);
+
+                ws.onopen = () => {
+                    console.log('WebSocket 연결 성공!');
+                    updateStatus('상대방을 기다리는 중...');
+                    // 서버에 게임 참여 요청
+                    sendMessage('join_game');
+                    restartButton.disabled = false;
+                };
+
+                ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    console.log('서버로부터 메시지 수신:', message);
+
+                    switch (message.type) {
+                        case 'game_start':
+                            // 게임 시작 메시지: 자신의 돌 색깔과 초기 보드 상태 받음
+                            playerColor = message.yourColor;
+                            isMyTurn = message.isYourTurn;
+                            updateBoardUI(message.board);
+                            updateStatus(isMyTurn ? `당신은 ${playerColor === 'B' ? '흑돌 ⚫️' : '백돌 ⚪️'}입니다. 당신의 차례입니다!` : `당신은 ${playerColor === 'B' ? '흑돌 ⚫️' : '백돌 ⚪️'}입니다. 상대방 차례입니다.`);
+                            break;
+                        case 'board_update':
+                            // 보드 업데이트 메시지: 새로운 보드 상태와 다음 턴 정보 받음
+                            board = message.board;
+                            isMyTurn = message.isYourTurn;
+                            updateBoardUI(board);
+                            updateStatus(isMyTurn ? '당신의 차례입니다!' : '상대방 차례입니다.');
+                            break;
+                        case 'game_over':
+                            // 게임 종료 메시지: 승패 결과 표시
+                            updateStatus(message.message);
+                            isMyTurn = false; // 게임 종료 시 턴 비활성화
+                            break;
+                        case 'error':
+                            // 오류 메시지
+                            updateStatus(`오류: ${message.message}`);
+                            break;
+                        case 'opponent_disconnected':
+                            updateStatus('상대방이 연결을 끊었습니다. 게임이 종료됩니다.');
+                            isMyTurn = false;
+                            break;
+                        case 'waiting_for_opponent':
+                            updateStatus('상대방을 기다리는 중...');
+                            break;
+                        default:
+                            console.warn('알 수 없는 메시지 타입:', message.type);
+                    }
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket 연결 종료됨.');
+                    updateStatus('서버 연결이 끊어졌습니다. 새로고침하여 다시 시도하세요.');
+                    isMyTurn = false;
+                    restartButton.disabled = false;
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket 오류 발생:', error);
+                    updateStatus('WebSocket 연결에 오류가 발생했습니다. 콘솔을 확인하세요.');
+                    isMyTurn = false;
+                    restartButton.disabled = false;
+                };
+
+            } catch (e) {
+                console.error("WebSocket 연결 시도 중 오류:", e);
+                updateStatus("WebSocket 연결에 실패했습니다. 서버 URL을 확인하세요.");
+                restartButton.disabled = false;
+            }
+        }
+
+        // 서버로 메시지 전송
+        function sendMessage(type, payload = {}) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type, ...payload }));
+            } else {
+                console.warn('WebSocket이 연결되지 않았거나 닫혔습니다.');
+                updateStatus('서버 연결이 불안정합니다. 새로고침 후 다시 시도하세요.');
+            }
+        }
+
+        // 오목판 UI 생성 및 이벤트 리스너 추가
+        function createBoardUI() {
+            gameBoardElement.innerHTML = ''; // 기존 보드 초기화
+            for (let r = 0; r < 8; r++) {
+                const rowContainer = document.createElement('div');
+                rowContainer.className = 'row-container flex'; // Tailwind flex
+                for (let c = 0; c < 8; c++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell bg-gray-600 hover:bg-gray-500'; // Tailwind classes
+                    cell.dataset.row = r;
+                    cell.dataset.col = c;
+                    cell.addEventListener('click', () => handleCellClick(r, c));
+                    rowContainer.appendChild(cell);
+                }
+                gameBoardElement.appendChild(rowContainer);
+            }
+        }
+
+        // 보드 상태를 UI에 반영
+        function updateBoardUI(currentBoard) {
+            board = currentBoard; // 최신 보드 상태 반영
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const cell = gameBoardElement.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+                    if (cell) {
+                        if (board[r][c] === 'B') {
+                            cell.textContent = '⚫️'; // 흑돌 이모지
+                        } else if (board[r][c] === 'W') {
+                            cell.textContent = '⚪️'; // 백돌 이모지
+                        } else {
+                            cell.textContent = ''; // 빈 칸
+                        }
+                    }
+                }
+            }
+        }
+
+        // 셀 클릭 핸들러
+        function handleCellClick(row, col) {
+            if (!isMyTurn) {
+                updateStatus('상대방 차례입니다!');
+                return;
+            }
+            if (board[row][col] !== null) {
+                updateStatus('이미 돌이 놓여진 자리입니다!');
+                return;
+            }
+            // 서버에 돌 놓기 요청
+            sendMessage('place_stone', { row, col });
+        }
+
+        // 상태 메시지 업데이트
+        function updateStatus(message) {
+            gameStatusElement.textContent = message;
+        }
+
+        // 재시작 버튼 클릭 이벤트
+        restartButton.addEventListener('click', () => {
+            updateStatus('게임을 다시 시작합니다...');
+            sendMessage('restart_game'); // 서버에 재시작 요청
+        });
+
+        // 페이지 로드 시 게임 초기화
+        window.onload = () => {
+            createBoardUI(); // 보드 UI 먼저 생성
+            initGame(); // WebSocket 연결 및 게임 시작
+        };
+
+    </script>
+</body>
+</html>
